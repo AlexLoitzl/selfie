@@ -2227,6 +2227,10 @@ int main(int argc, char** argv) {
 
   init_library();
 
+  init_system();
+
+  printf2("%u %u\n", (char*) BOOTLEVELZERO, (char*) WINDOWS);
+
   exit_code = selfie();
 
   if (exit_code != EXITCODE_NOARGUMENTS)

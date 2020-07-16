@@ -17,7 +17,7 @@ virtual machine monitors. The common theme is to identify and
 resolve self-reference in systems code which is seen as the key
 challenge when teaching systems engineering, hence the name.
 
-Selfie is a self-contained 64-bit, 8-KLOC C implementation of:
+Selfie is a self-contained 64-bit, 9-KLOC C implementation of:
 
 1. a self-compiling compiler called starc that compiles
    a tiny but still fast subset of C called C Star (C*) to
@@ -1651,8 +1651,7 @@ uint64_t mobster(uint64_t* to_context);
 
 char* replace_extension(char* filename, char* extension);
 
-uint64_t is_boot_level_zero();
-void     boot_loader(uint64_t* context);
+void boot_loader(uint64_t* context);
 
 uint64_t selfie_run(uint64_t machine);
 
@@ -1705,8 +1704,6 @@ uint64_t free_page_frame_memory      = 0;
 // ------------------- CONSOLE ARGUMENT SCANNER --------------------
 // -----------------------------------------------------------------
 
-void init_selfie(uint64_t argc, uint64_t* argv);
-
 uint64_t  number_of_remaining_arguments();
 uint64_t* remaining_arguments();
 
@@ -1724,7 +1721,23 @@ uint64_t* selfie_argv = (uint64_t*) 0;
 
 char* argument = (char*) 0;
 
-char* selfie_name = (char*) 0;
+// -----------------------------------------------------------------
+// ----------------------------- SELFIE ----------------------------
+// -----------------------------------------------------------------
+
+void init_selfie(uint64_t argc, uint64_t* argv);
+
+void init_system();
+
+uint64_t is_boot_level_zero();
+
+// ------------------------ GLOBAL CONSTANTS -----------------------
+
+char* selfie_name = (char*) 0; // name of running selfie executable
+
+uint64_t BOOTLEVELZERO = 0; // flag for indicating boot level
+
+uint64_t WINDOWS = 0; // indicates if we are likely running on Windows
 
 // ------------------------- INITIALIZATION ------------------------
 
@@ -1733,6 +1746,17 @@ void init_selfie(uint64_t argc, uint64_t* argv) {
   selfie_argv = argv;
 
   selfie_name = get_argument();
+}
+
+void init_system() {
+  if (is_boot_level_zero()) {
+    BOOTLEVELZERO = 1;
+
+    // Caution: the name of the executable must not have an extension to make this work
+    // try opening executable with zeroed flags which likely fails but just on Windows
+    if (signed_less_than(sign_extend(open(selfie_name, 0, 0), SYSCALL_BITWIDTH), 0))
+      WINDOWS = 1;
+  }
 }
 
 // *~*~ *~*~ *~*~ *~*~ *~*~ *~*~ *~*~ *~*~ *~*~ *~*~ *~*~ *~*~ *~*~
@@ -5858,15 +5882,15 @@ uint64_t open_write_only(char* name) {
   // not always work and require intervention
   uint64_t fd;
 
-  // try Windows flags
-  fd = sign_extend(open(name, WINDOWS_O_BINARY_CREAT_TRUNC_WRONLY, S_IRUSR_IWUSR_IRGRP_IROTH), SYSCALL_BITWIDTH);
-
-  if (signed_less_than(fd, 0)) {
-    // try Mac flags
+  if (WINDOWS)
+    // use Windows flags
+    fd = sign_extend(open(name, WINDOWS_O_BINARY_CREAT_TRUNC_WRONLY, S_IRUSR_IWUSR_IRGRP_IROTH), SYSCALL_BITWIDTH);
+  else {
+    // try Mac flags first as default
     fd = sign_extend(open(name, MAC_O_CREAT_TRUNC_WRONLY, S_IRUSR_IWUSR_IRGRP_IROTH), SYSCALL_BITWIDTH);
 
     if (signed_less_than(fd, 0))
-      // try Linux flags
+      // then try Linux flags
       fd = sign_extend(open(name, LINUX_O_CREAT_TRUNC_WRONLY, S_IRUSR_IWUSR_IRGRP_IROTH), SYSCALL_BITWIDTH);
   }
 
@@ -6404,7 +6428,11 @@ void implement_openat(uint64_t* context) {
   mode      = *(get_regs(context) + REG_A3);
 
   if (down_load_string(context, vfilename, filename_buffer)) {
-    fd = sign_extend(open(filename_buffer, flags, mode), SYSCALL_BITWIDTH);
+    if (flags == MAC_O_CREAT_TRUNC_WRONLY)
+      // default for opening write-only files
+      fd = open_write_only(filename_buffer);
+    else
+      fd = sign_extend(open(filename_buffer, flags, mode), SYSCALL_BITWIDTH);
 
     *(get_regs(context) + REG_A0) = fd;
 
@@ -9009,26 +9037,6 @@ char* replace_extension(char* filename, char* extension) {
   return s;
 }
 
-uint64_t is_boot_level_zero() {
-  // in C99 malloc(0) returns either a null pointer or a unique pointer.
-  // (see http://pubs.opengroup.org/onlinepubs/9699919799/)
-  // selfie's malloc implementation, on the other hand,
-  // returns the same not null address, if malloc(0) is called consecutively.
-  uint64_t first_malloc;
-  uint64_t second_malloc;
-
-  first_malloc = (uint64_t) malloc(0);
-  second_malloc = (uint64_t) malloc(0);
-
-  if (first_malloc == 0)
-    return 1;
-  if (first_malloc != second_malloc)
-    return 1;
-
-  // it is selfie's malloc, so it can not be boot level zero.
-  return 0;
-}
-
 void boot_loader(uint64_t* context) {
   up_load_binary(context);
 
@@ -9072,7 +9080,7 @@ uint64_t selfie_run(uint64_t machine) {
 
     init_replay_engine();
   } else if (machine == HYPSTER)
-    if (is_boot_level_zero())
+    if (BOOTLEVELZERO)
       // no hypster on boot level zero
       machine = MIPSTER;
 
@@ -9194,6 +9202,30 @@ uint64_t selfie() {
 }
 
 // -----------------------------------------------------------------
+// ----------------------------- SELFIE ----------------------------
+// -----------------------------------------------------------------
+
+uint64_t is_boot_level_zero() {
+  // in C99 malloc(0) returns either a null pointer or a unique pointer.
+  // (see http://pubs.opengroup.org/onlinepubs/9699919799/)
+  // selfie's malloc implementation, on the other hand,
+  // returns the same not null address, if malloc(0) is called consecutively.
+  uint64_t first_malloc;
+  uint64_t second_malloc;
+
+  first_malloc = (uint64_t) malloc(0);
+  second_malloc = (uint64_t) malloc(0);
+
+  if (first_malloc == 0)
+    return 1;
+  if (first_malloc != second_malloc)
+    return 1;
+
+  // it is selfie's malloc, so it can not be boot level zero.
+  return 0;
+}
+
+// -----------------------------------------------------------------
 // ----------------------------- MAIN ------------------------------
 // -----------------------------------------------------------------
 
@@ -9204,6 +9236,8 @@ int main(int argc, char** argv) {
   init_selfie((uint64_t) argc, (uint64_t*) argv);
 
   init_library();
+
+  init_system();
 
   exit_code = selfie();
 
