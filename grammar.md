@@ -39,7 +39,7 @@ cstar             = { type identifier
                       [ "=" [ cast ] [ "-" ] ( integer_literal | character_literal ) ] ";" |
                     ( "void" | type ) identifier procedure } .
 
-type              = "uint64_t" [ "*" ] .
+type              = [ "*" ] "uint64_t"  .
 
 cast              = "(" type ")" .
 
@@ -53,9 +53,9 @@ statement         = ( [ "*" ] identifier | "*" "(" expression ")" ) "=" expressi
 
 call              = identifier "(" [ expression { "," expression } ] ")" .
 
-expression        = simple_expression
+expression        = recursion | simple_expression
                     [ ( "==" | "!=" | "<" | ">" | "<=" | ">=" ) simple_expression ] .
-
+recursion = recursion + recursion.
 simple_expression = term { ( "+" | "-" ) term } .
 
 term              = factor { ( "*" | "/" | "%" ) factor } .
